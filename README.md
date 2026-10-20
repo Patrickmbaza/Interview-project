@@ -39,7 +39,7 @@ The following screenshots document the completed deployment and are included in 
 
 The Jenkins build shows checkout, validation, testing, Docker build, Trivy scanning, ECR push, Terraform deployment, and health verification.
 
-![Successful Jenkins pipeline](Jenkins-build.png)
+![Successful Jenkins pipeline](Jenkins-Pipeline.png)
 
 ### AWS ECS service
 
@@ -63,7 +63,7 @@ Application container output is sent to the CloudWatch log group `/ecs/devops-mi
 
 The Jenkins build also contains the test result, Docker build output, and Trivy image scan.
 
-![Jenkins build evidence](Jenkins-build.png)
+![Jenkins build evidence](Jenkins-Pipeline.png)
 
 ## API
 
