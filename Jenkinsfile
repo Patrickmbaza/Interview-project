@@ -80,7 +80,7 @@ pipeline {
             steps {
                 sh '''
                     command -v trivy >/dev/null 2>&1 || {
-                        echo "Trivy is not installed on the Jenkins agent"
+                        echo "Trivy is not installed"
                         exit 1
                     }
 
@@ -118,7 +118,6 @@ pipeline {
                             -var="aws_region=$AWS_REGION"
 
                         REPO=$(terraform -chdir=terraform output -raw ecr_repository_url)
-
                         REGISTRY=$(echo "$REPO" | cut -d/ -f1)
 
                         aws ecr get-login-password \
