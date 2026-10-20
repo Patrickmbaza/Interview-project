@@ -1,6 +1,19 @@
 # DevOps Microservice: Jenkins + AWS ECS Fargate
 
-This repository implements the practical challenge from `DevOps Engineer Practical Challenge(1).docx`: a small FastAPI service, Docker image, modular Terraform infrastructure, and a Jenkins CI/CD pipeline for AWS ECS Fargate.
+This repository implements the practical challenge from `DevOps Engineer Practical Challenge(1).docx`.
+
+It demonstrates a complete delivery path for a small FastAPI microservice:
+
+1. Code is stored in GitHub.
+2. A GitHub webhook triggers Jenkins.
+3. Jenkins validates, tests, builds, and scans the application.
+4. Jenkins pushes an immutable Docker image to Amazon ECR.
+5. Terraform provisions and updates the AWS environment.
+6. The service runs on ECS Fargate behind an Application Load Balancer.
+7. CloudWatch collects application logs and operational metrics.
+8. Jenkins verifies the deployed service through its public health endpoint.
+
+The deployment is repeatable: the Docker image is tagged with the Git commit SHA and the infrastructure is defined in Terraform rather than configured manually in the AWS console.
 
 ## Architecture
 
@@ -18,6 +31,40 @@ flowchart LR
 
 The ALB is the only public application entry point. Tasks run without public IPs in private subnets. This implementation intentionally uses HTTP; HTTPS requires an ACM certificate, an HTTPS listener, and DNS, which are documented future improvements.
 
+## Deployed architecture evidence
+
+The following screenshots document the completed deployment and are included in the repository root:
+
+### Jenkins pipeline
+
+The Jenkins build shows checkout, validation, testing, Docker build, Trivy scanning, ECR push, Terraform deployment, and health verification.
+
+![Successful Jenkins pipeline](Jenkins-build.png)
+
+### AWS ECS service
+
+The ECS screenshot shows the running Fargate service and its deployed tasks.
+
+![AWS ECS service](AWS-ECS.png)
+
+### Application endpoint
+
+The application is exposed through the Application Load Balancer. The health endpoint returns HTTP 200 after deployment.
+
+![Application Load Balancer endpoint](ALB-Endpoint.png)
+
+### CloudWatch logs
+
+Application container output is sent to the CloudWatch log group `/ecs/devops-microservice-dev`.
+
+![CloudWatch logs](CloudWatch-logs.png)
+
+### Build and security evidence
+
+The Jenkins build also contains the test result, Docker build output, and Trivy image scan.
+
+![Jenkins build evidence](Jenkins-build.png)
+
 ## API
 
 - `GET /health` returns a 200 health response.
@@ -33,7 +80,7 @@ app/                         FastAPI application
 tests/                       pytest tests
 Dockerfile                   non-root production image
 Jenkinsfile                  CI/CD pipeline
-jenkins/docker-compose.yml   local Jenkins controller
+docker-compose.yml           local application/Jenkins support services
 terraform/modules/            networking, ECR, ECS, monitoring
 terraform/                    dev environment/root composition
 scripts/verify.sh             health verification helper
@@ -73,6 +120,22 @@ terraform -chdir=terraform plan -var-file=dev.tfvars -var='image_tag=bootstrap'
 
 The first real deployment is performed by Jenkins: it creates only ECR during the Push stage, pushes an immutable commit-SHA image, then applies the complete stack with that image. This avoids starting ECS with an image that does not exist. The initial apply creates AWS resources and may incur charges; review the plan and confirm before running it.
 
+### AWS resources
+
+Terraform provisions the following resources:
+
+- VPC with public and private subnets across two Availability Zones
+- Internet Gateway for public traffic
+- NAT gateways for private-subnet outbound access
+- Security groups for the ALB and ECS tasks
+- ECR repository with immutable image tags and scan-on-push
+- ECS Fargate cluster, task definition, and service
+- Public Application Load Balancer and target group
+- CloudWatch log group and ECS/ALB monitoring alarms
+- IAM execution and task roles
+
+The ECS tasks do not receive public IP addresses. Traffic enters through the ALB on port 80, is forwarded to the containers on port 8000, and the ALB checks `/health`.
+
 ## Jenkins setup
 
 ```bash
@@ -86,6 +149,25 @@ Create a Pipeline job connected to this GitHub repository and point it at `Jenki
 
 The pipeline runs checkout, syntax/Terraform validation, tests, Docker build, Trivy scan, ECR push, Terraform deploy, and an ALB `/health` verification. It uses the Git commit SHA as an immutable image tag, waits for ECS stabilization through Terraform, and skips AWS stages for pull requests (`changeRequest()`). Do not run `terraform destroy` from this pipeline.
 
+### Automated pipeline flow
+
+```text
+GitHub push
+    -> GitHub webhook
+    -> Jenkins checkout
+    -> Python dependency installation
+    -> Compile and Ruff validation
+    -> Terraform format and validation
+    -> Pytest
+    -> Docker build
+    -> Trivy HIGH/CRITICAL scan
+    -> ECR repository bootstrap and image push
+    -> Terraform ECS deployment
+    -> ALB health verification
+```
+
+After the one-time Jenkins, AWS credential, Terraform backend, and webhook configuration, a normal Git push starts this workflow automatically. A failed validation, test, security scan, deployment, or health check fails the build and prevents the pipeline from being reported as successful.
+
 ## Logs and troubleshooting
 
 ```bash
@@ -95,6 +177,25 @@ aws ecs describe-services --cluster devops-microservice-dev --services devops-mi
 ```
 
 If tasks stop, inspect ECS stopped-task reasons and CloudWatch logs. Common causes are an image tag that was not pushed, missing execution-role permissions, a security group/health-check mismatch, or no network path from private tasks to ECR/logs. If the ALB is unhealthy, verify `/health` locally, the target port 8000, and the task security group source.
+
+## Verification results
+
+The completed Jenkins deployment verified the following:
+
+- Python validation completed successfully.
+- Terraform formatting and validation completed successfully.
+- All automated tests passed.
+- The Docker image was built successfully.
+- Trivy reported no HIGH or CRITICAL vulnerabilities.
+- The image was pushed to ECR using the commit SHA as its tag.
+- ECS, ALB, networking, IAM, CloudWatch, and ECR resources were deployed by Terraform.
+- The ALB health check returned a healthy response.
+
+Example deployed response:
+
+```json
+{"status":"healthy","service":"devops-microservice-dev","environment":"dev"}
+```
 
 ## Cleanup
 
@@ -109,3 +210,5 @@ This removes the application infrastructure but ECR is configured with `force_de
 ## Assumptions and future improvements
 
 Implemented: non-root image, immutable ECR tags, private ECS tasks, NAT egress, ALB health checks, CloudWatch logs/alarms, resource tags, pull-request deployment guard, and Terraform-managed infrastructure. Not implemented: TLS, VPC endpoints, WAF, secret manager integration, autoscaling, centralized remote-state bootstrap, and a dedicated hardened Jenkins agent. These are appropriate next steps for a larger production service.
+
+The current HTTP ALB endpoint is suitable for this practical challenge. For a production internet-facing service, the next priorities would be HTTPS with ACM, AWS WAF, autoscaling, VPC endpoints to reduce NAT costs, secrets from AWS Secrets Manager, short-lived IAM role credentials, and a hardened dedicated Jenkins agent.
