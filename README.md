@@ -158,7 +158,7 @@ The ECS tasks do not receive public IP addresses. Traffic enters through the ALB
 
 ```bash
 docker compose -f jenkins/docker-compose.yml up -d
-docker logs -f jenkins-jenkins-1
+docker logs -f devops-jenkins
 ```
 
 For a real Jenkins agent, install Docker CLI/daemon access, AWS CLI, Terraform, Python, curl, and Trivy. The Docker socket is powerful; use a dedicated agent and restrict job permissions. Install these plugins: Pipeline, Git, GitHub Integration, Credentials Binding, and AWS Credentials. No paid plugins are required.
