@@ -1,0 +1,5 @@
+aws_region = "us-east-1"
+project_name = "devops-microservice"
+environment = "dev"
+desired_count = 2
+# alarm_email = "gotehmbaza@gmail.com"
