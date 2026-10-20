@@ -80,7 +80,8 @@ app/                         FastAPI application
 tests/                       pytest tests
 Dockerfile                   non-root production image
 Jenkinsfile                  CI/CD pipeline
-docker-compose.yml           local application/Jenkins support services
+docker-compose.yml           local application container
+jenkins/docker-compose.yml   local Jenkins controller
 terraform/modules/            networking, ECR, ECS, monitoring
 terraform/                    dev environment/root composition
 scripts/verify.sh             health verification helper
