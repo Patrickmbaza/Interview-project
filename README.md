@@ -91,6 +91,23 @@ scripts/verify.sh             health verification helper
 
 For local work: Python 3.12+, Docker, curl, Terraform 1.6+, AWS CLI, and Trivy. For AWS: an AWS account and an IAM principal able to create the resources described below. Never put access keys in Git or the image.
 
+## Bootstrap
+
+The one-time setup can be prepared with `scripts/bootstrap.sh`. It validates the local tools and AWS identity, creates a versioned and encrypted Terraform state bucket, creates the DynamoDB lock table, writes the ignored local `terraform/backend.tf`, and starts the Jenkins controller with Docker Compose.
+
+Run it from the repository root:
+
+```bash
+chmod +x scripts/bootstrap.sh
+./scripts/bootstrap.sh \
+  --region us-east-1 \
+  --state-bucket YOUR-GLOBALLY-UNIQUE-TERRAFORM-BUCKET
+```
+
+The script asks for confirmation before creating AWS state resources. Use `--skip-backend` when the backend already exists, or `--skip-jenkins` when Jenkins is managed elsewhere. It never stores AWS, GitHub, or Jenkins secrets in the repository and does not destroy resources.
+
+After bootstrap, configure the Jenkins `aws-deploy` credential, create the Pipeline job, and add the GitHub webhook. The application pipeline then handles validation, testing, image scanning, ECR publishing, Terraform deployment, and health verification.
+
 ## Local validation
 
 ```bash
@@ -150,6 +167,109 @@ Create a Pipeline job connected to this GitHub repository and point it at `Jenki
 
 The pipeline runs checkout, syntax/Terraform validation, tests, Docker build, Trivy scan, ECR push, Terraform deploy, and an ALB `/health` verification. It uses the Git commit SHA as an immutable image tag, waits for ECS stabilization through Terraform, and skips AWS stages for pull requests (`changeRequest()`). Do not run `terraform destroy` from this pipeline.
 
+## Running the project on a live server
+
+An interviewer can run the complete solution from a Linux server such as an Ubuntu EC2 instance. The server hosts Jenkins; the application itself is deployed by Terraform to AWS ECS Fargate.
+
+### Server requirements
+
+Use a server with at least 2 vCPUs, 4 GB RAM, 30 GB disk space, a public DNS name or public IP, and Docker with the Compose plugin. Configure the firewall/security group as follows:
+
+- TCP 22: administrator's IP only
+- TCP 8080: administrator's IP only during Jenkins setup
+- TCP 443: recommended when Jenkins is placed behind an HTTPS reverse proxy
+
+The Jenkins webhook endpoint must be reachable from GitHub. For a short-lived demonstration, port 8080 can be exposed to GitHub, but a real deployment should use HTTPS and restrict Jenkins access through a VPN, reverse proxy, or allowlist.
+
+### Start Jenkins on the server
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git docker.io docker-compose-plugin awscli
+sudo systemctl enable --now docker
+
+git clone https://github.com/Patrickmbaza/Interview-project.git
+cd Interview-project
+
+chmod +x scripts/bootstrap.sh scripts/destroy.sh
+aws configure
+
+./scripts/bootstrap.sh \
+  --region us-east-1 \
+  --state-bucket YOUR-GLOBALLY-UNIQUE-TERRAFORM-BUCKET
+```
+
+The bootstrap script builds and starts the custom Jenkins image. Retrieve the initial administrator password with:
+
+```bash
+docker exec devops-jenkins \
+  cat /var/jenkins_home/secrets/initialAdminPassword
+```
+
+Open `http://SERVER_PUBLIC_IP:8080`, complete the Jenkins setup, and install the Pipeline, Git, GitHub Integration, Credentials Binding, and AWS Credentials plugins.
+
+### Configure the deployment job
+
+Create a Jenkins Pipeline job with:
+
+1. Pipeline definition: **Pipeline script from SCM**
+2. SCM: Git
+3. Repository: `https://github.com/Patrickmbaza/Interview-project.git`
+4. Branch: `*/main`
+5. Script path: `Jenkinsfile`
+6. Trigger: **GitHub hook trigger for GITScm polling**
+
+Add a Jenkins credential with ID `aws-deploy` using an AWS IAM user or role restricted to the resources required by this project. Do not place AWS keys in the repository or inside the Docker image.
+
+In GitHub, add this webhook under **Settings → Webhooks**:
+
+```text
+http://SERVER_PUBLIC_IP:8080/github-webhook/
+```
+
+Use content type `application/json` and enable push events. If Jenkins is behind HTTPS, use the HTTPS hostname instead.
+
+### Deploy and test
+
+Push a commit to `main`, or run the Jenkins job once manually. The pipeline will validate the code, run tests, build and scan the image, push it to ECR, deploy ECS with Terraform, and verify the ALB health endpoint.
+
+After a successful build, retrieve the application URL from Jenkins or run:
+
+```bash
+terraform -chdir=terraform output -raw application_url
+```
+
+Test the live service:
+
+```bash
+APP_URL="$(terraform -chdir=terraform output -raw application_url)"
+curl "$APP_URL/health"
+curl "$APP_URL/"
+curl "$APP_URL/api/v1/message"
+```
+
+The FastAPI documentation is also available at:
+
+```text
+APP_URL/docs
+```
+
+View live container logs with:
+
+```bash
+aws logs tail /ecs/devops-microservice-dev \
+  --follow \
+  --region us-east-1
+```
+
+When testing is complete, remove the AWS environment and optionally Jenkins:
+
+```bash
+./scripts/destroy.sh --stop-jenkins
+```
+
+Keep the Terraform state bucket and lock table if the environment may be redeployed. Use `--include-backend` only when the project is permanently finished.
+
 ### Automated pipeline flow
 
 ```text
@@ -207,6 +327,25 @@ terraform -chdir=terraform destroy -var-file=dev.tfvars
 ```
 
 This removes the application infrastructure but ECR is configured with `force_delete = false`; delete retained images/repository intentionally if required. Also remove the remote state bucket/table only when no state is using them.
+
+For a guarded cleanup, use the destroy script:
+
+```bash
+chmod +x scripts/destroy.sh
+./scripts/destroy.sh --var-file dev.tfvars
+```
+
+The script deletes ECR images before destroying the Terraform-managed application resources, which allows the immutable ECR repository to be removed. It preserves the Terraform state bucket, lock table, and Jenkins data by default. To stop Jenkins, add `--stop-jenkins`. To remove Jenkins data as well, use `--remove-jenkins-data`. Delete the Terraform backend only when the project is permanently finished:
+
+```bash
+./scripts/destroy.sh \
+  --var-file dev.tfvars \
+  --include-backend \
+  --state-bucket YOUR-TERRAFORM-BUCKET \
+  --lock-table YOUR-TERRAFORM-LOCK-TABLE
+```
+
+The destroy script requires typing `DESTROY` unless `--yes` is explicitly supplied.
 
 ## Assumptions and future improvements
 
