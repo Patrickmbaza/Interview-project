@@ -39,31 +39,31 @@ The following screenshots document the completed deployment and are included in 
 
 The Jenkins build shows checkout, validation, testing, Docker build, Trivy scanning, ECR push, Terraform deployment, and health verification.
 
-![Successful Jenkins pipeline](Jenkins-Pipeline.png)
+![Successful Jenkins pipeline](screenshots/Jenkins-Pipeline.png)
 
 ### AWS ECS service
 
 The ECS screenshot shows the running Fargate service and its deployed tasks.
 
-![AWS ECS service](AWS-ECS.png)
+![AWS ECS service](screenshots/AWS-ECS.png)
 
 ### Application endpoint
 
 The application is exposed through the Application Load Balancer. The health endpoint returns HTTP 200 after deployment.
 
-![Application Load Balancer endpoint](ALB-Endpoint.png)
+![Application Load Balancer endpoint](screenshots/ALB-Endpoint.png)
 
 ### CloudWatch logs
 
 Application container output is sent to the CloudWatch log group `/ecs/devops-microservice-dev`.
 
-![CloudWatch logs](CloudWatch-logs.png)
+![CloudWatch logs](screenshots/CloudWatch-logs.png)
 
 ### Build and security evidence
 
 The Jenkins build also contains the test result, Docker build output, and Trivy image scan.
 
-![Jenkins build evidence](Jenkins-build.png)
+![Jenkins build evidence](screenshots/Jenkins-build.png)
 
 ## API
 
