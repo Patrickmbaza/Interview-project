@@ -1,8 +1,6 @@
 # DevOps Microservice: Jenkins + AWS ECS Fargate
 
-This repository implements the practical challenge from `DevOps Engineer Practical Challenge(1).docx`.
-
-It demonstrates a complete delivery path for a small FastAPI microservice:
+This repository demonstrates a complete delivery path for a small FastAPI microservice:
 
 1. Code is stored in GitHub.
 2. A GitHub webhook triggers Jenkins.
