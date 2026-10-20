@@ -63,7 +63,7 @@ Application container output is sent to the CloudWatch log group `/ecs/devops-mi
 
 The Jenkins build also contains the test result, Docker build output, and Trivy image scan.
 
-![Jenkins build evidence](Jenkins-Pipeline.png)
+![Jenkins build evidence](Jenkins-build.png)
 
 ## API
 
