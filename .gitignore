@@ -1,11 +1,52 @@
+# Python bytecode, test and lint caches
 __pycache__/
+*.py[cod]
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local Python environments
 .venv/
+.venv-*/
+venv/
+env/
+
+# Local environment variables and credentials
 .env
+.env.*
+!.env.example
+!.env.*.example
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+
+# Terraform generated files and machine-specific configuration
 .terraform/
 *.tfstate
 *.tfstate.*
+*.tfplan
+*.plan
 crash.log
+crash.*.log
+terraform/backend.tf
 *.tfvars
 !*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Build output and local logs
+build/
+dist/
+*.log
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
