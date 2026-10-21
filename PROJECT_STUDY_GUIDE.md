@@ -199,9 +199,9 @@ The backend uses an S3 bucket and DynamoDB locking. Terraform has started deprec
 
 ### `scripts/bootstrap.sh`
 
-On Ubuntu or Debian, the bootstrap script can install missing Docker Engine/Compose, Terraform, AWS CLI, Python 3, and curl. It checks whether the `aws` command exists rather than checking its version, so an existing AWS CLI v1 installation will not automatically be upgraded to v2. The AWS CLI installer URLs in both the host bootstrap script and Jenkins image are for x86_64; ARM servers need an architecture-aware installer. The script checks for AWS credentials, optionally creates the remote backend resources after confirmation, writes the ignored backend file, and starts Jenkins with Docker Compose. Trivy is installed in the Jenkins image, not as a host requirement. Git must be available to clone the repository before the script can run.
+On Ubuntu or Debian, the bootstrap script can install missing Docker Engine/Compose, Terraform, AWS CLI, Python 3, and curl. It checks whether the `aws` command exists rather than checking its version, so an existing AWS CLI v1 installation will not automatically be upgraded to v2. The AWS CLI installer URLs in both the host bootstrap script and Jenkins image are for x86_64; ARM servers need an architecture-aware installer. The script checks AWS credentials, optionally creates/configures the remote state bucket and lock table after confirmation, writes the ignored `terraform/backend.tf`, and starts Jenkins with Docker Compose. Trivy is installed in the Jenkins image, not as a host requirement. Git must be available to clone the repository before the script can run.
 
-The script requires root or `sudo` for package installation and AWS permissions for state setup. It does not deploy the application; Jenkins performs that after the job and credentials are configured.
+Important distinction: **bootstrap does not execute `terraform init`**. It prepares the backend configuration and host tools, but it does not initialize Terraform, create application infrastructure, or deploy the service. If the operator needs to run Terraform directly on the host, configure `terraform/backend.tf` first and then run `terraform -chdir=terraform init -input=false`. If using an existing backend with `--skip-backend`, provide its exact configuration yourself before initialization. The Jenkins pipeline independently runs Terraform initialization in its AWS Push stage. Never initialize with an empty/different backend when the deployed resources are tracked in another state. The script requires root or `sudo` for package installation and AWS permissions for backend setup.
 
 ### `scripts/destroy.sh`
 
@@ -228,7 +228,7 @@ docker compose down
 ### Live environment
 
 1. Clone the repository to an Ubuntu or Debian server and provide AWS credentials (prefer an instance profile on EC2).
-2. Run `scripts/bootstrap.sh` with a globally unique state-bucket name.
+2. Run `scripts/bootstrap.sh` with a globally unique state-bucket name. This installs/checks host tools, configures the remote state backend, and starts Jenkins; it does not run `terraform init` or deploy the application. If you intend to use Terraform commands on the EC2 host, run `terraform -chdir=terraform init -input=false` after bootstrap. The Jenkins pipeline initializes Terraform itself during its AWS Push stage.
 3. Finish Jenkins' browser setup and install the listed plugins.
 4. Create a Pipeline job from SCM using this repository, `main`, and `Jenkinsfile`.
 5. Add the `aws-deploy` Jenkins credential and GitHub push webhook.

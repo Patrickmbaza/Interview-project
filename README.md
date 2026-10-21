@@ -119,7 +119,7 @@ For local work: Python 3.12+, Docker, curl, Terraform 1.6+, AWS CLI, and Trivy. 
 
 ## Bootstrap
 
-The one-time setup can be prepared with `scripts/bootstrap.sh`. On Ubuntu or Debian, it installs missing host prerequisites (Docker Engine and Compose, Terraform, AWS CLI v2, Python 3, and curl), verifies AWS identity, creates a versioned and encrypted Terraform state bucket, creates the DynamoDB lock table, writes the ignored local `terraform/backend.tf`, and starts Jenkins with Docker Compose. The script asks for confirmation before creating the AWS backend. It requires root or `sudo` for package installation. Trivy is installed inside the Jenkins image by `jenkins/Dockerfile`, so it does not need a separate host installation.
+The one-time setup can be prepared with `scripts/bootstrap.sh`. On Ubuntu or Debian, it installs missing host prerequisites (Docker Engine and Compose, Terraform, AWS CLI v2, Python 3, and curl), verifies AWS identity, creates/configures a versioned and encrypted Terraform state bucket and DynamoDB lock table, writes the ignored local `terraform/backend.tf`, and starts Jenkins with Docker Compose. The script asks for confirmation before configuring the backend. Trivy is installed inside the Jenkins image by `jenkins/Dockerfile`, so it does not need a separate host installation.
 
 Run it from the repository root:
 
@@ -130,9 +130,15 @@ chmod +x scripts/bootstrap.sh
   --state-bucket YOUR-GLOBALLY-UNIQUE-TERRAFORM-BUCKET
 ```
 
-Use `--skip-backend` when the backend already exists, `--skip-jenkins` when Jenkins is managed elsewhere, or `--skip-tool-install` if you have already installed the host prerequisites. Automatic host installation supports Ubuntu and Debian; on other distributions, install Docker with Compose, Terraform, AWS CLI v2, Python 3, and curl before running the script. It never stores AWS, GitHub, or Jenkins secrets in the repository and does not destroy resources.
+Use `--skip-backend` when you do not want the script to create/configure backend resources, `--skip-jenkins` when Jenkins is managed elsewhere, or `--skip-tool-install` if you have already installed the host prerequisites. **Bootstrap does not run `terraform init`, validate, plan, or deploy the application.** With the backend enabled, it writes the local backend configuration; initialize it explicitly from the repository root when you need Terraform on the host:
 
-After bootstrap, configure the Jenkins `aws-deploy` credential, create the Pipeline job, and add the GitHub webhook. The application pipeline then handles validation, testing, image scanning, ECR publishing, Terraform deployment, and health verification.
+```bash
+terraform -chdir=terraform init -input=false
+```
+
+If you use `--skip-backend`, configure `terraform/backend.tf` yourself with the existing backend's exact bucket, key, region, and locking settings before initializing. Do not initialize against a different/empty backend when Terraform state already exists. Automatic host installation supports Ubuntu and Debian; on other distributions, install Docker with Compose, Terraform, AWS CLI v2, Python 3, and curl before running the script. Bootstrap never stores AWS, GitHub, or Jenkins secrets in the repository and does not deploy or destroy application resources.
+
+After bootstrap, configure the Jenkins `aws-deploy` credential, create the Pipeline job, and add the GitHub webhook. The Jenkins pipeline runs its own Terraform initialization during the AWS Push stage, then handles validation, testing, image scanning, ECR publishing, Terraform deployment, and health verification. That pipeline initialization is separate from initialization on the EC2 host.
 
 ## Local validation
 
@@ -153,7 +159,7 @@ The root module creates a VPC, two public and two private subnets, internet gate
 
 The private subnets use NAT gateways so Fargate can pull from ECR and publish CloudWatch logs without public task IPs. NAT gateways incur ongoing AWS charges; a cost-optimized production variant can replace them with VPC endpoints for ECR, S3, and CloudWatch Logs.
 
-Terraform state should use an encrypted, versioned S3 bucket with a DynamoDB lock table. Copy `terraform/backend.tf.example` to `terraform/backend.tf`, replace the placeholders, and create the bootstrap bucket/table using your organization's approved process before `terraform init`. `backend.tf` is ignored by Git. A local state file is acceptable only for a disposable learning account.
+Terraform state should use an encrypted, versioned S3 bucket with a DynamoDB lock table. Either let `scripts/bootstrap.sh` write `terraform/backend.tf` or copy `terraform/backend.tf.example` to `terraform/backend.tf` and replace its placeholders with your existing backend settings. `backend.tf` is ignored by Git. Run `terraform -chdir=terraform init -input=false` after configuring it when using Terraform from the host; the Jenkins pipeline initializes Terraform independently during its AWS Push stage. A local state file is acceptable only for a disposable learning account.
 
 ```bash
 cp terraform/terraform.tfvars.example terraform/dev.tfvars
