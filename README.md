@@ -17,21 +17,47 @@ The deployment is repeatable: the Docker image is tagged with the Git commit SHA
 
 ```mermaid
 flowchart LR
-  Dev[Developer] --> GH[GitHub]
-  GH --> J[Jenkins]
-  J --> T[Tests + Trivy scan]
-  J --> ECR[Amazon ECR]
-  ECR --> ECS[ECS Fargate tasks in private subnets]
-  Internet --> ALB[Public Application Load Balancer]
-  ALB --> ECS
-  ECS --> CW[CloudWatch Logs, Container Insights, Alarms]
+  Dev[Developer] --> GH[GitHub repository]
+  GH -- push webhook --> J[Jenkins on Linux server]
+  J --> CI[Validate, test, build, Trivy scan]
+  CI --> ECR[Amazon ECR]
+  J -- Terraform apply --> TF[Terraform]
+
+  subgraph AWS[AWS account - us-east-1]
+    ECR
+    subgraph VPC[VPC 10.20.0.0/16]
+      subgraph Public[Public subnets - two AZs]
+        ALB[Internet-facing ALB - HTTP 80]
+        NAT[NAT gateways]
+      end
+      subgraph Private[Private subnets - two AZs]
+        ECS[ECS Fargate service - desired count 2]
+        Task1[FastAPI task - port 8000]
+        Task2[FastAPI task - port 8000]
+      end
+      ALB -->|/health and API traffic| ECS
+      ECS --> Task1
+      ECS --> Task2
+      ECS -->|private subnet egress| NAT
+    end
+    CW[CloudWatch logs, Container Insights, alarms]
+    ECS --> CW
+  end
+
+  Users[Application users] --> ALB
+  NAT -->|image pull traffic| ECR
+  NAT -->|container logs| CW
+  TF --> ECR
+  TF --> ALB
+  TF --> ECS
+  TF --> CW
 ```
 
-The ALB is the only public application entry point. Tasks run without public IPs in private subnets. This implementation intentionally uses HTTP; HTTPS requires an ACM certificate, an HTTPS listener, and DNS, which are documented future improvements.
+Jenkins runs on a separate Linux server and uses its configured AWS credential to manage deployment. Terraform creates the AWS application environment. The ALB is the only public application entry point; Fargate tasks have no public IPs and run in private subnets. Tasks pull their image from ECR and send logs to CloudWatch. This implementation intentionally uses HTTP; HTTPS requires an ACM certificate, an HTTPS listener, and DNS, which are documented future improvements.
 
 ## Deployed architecture evidence
 
-The following screenshots document the completed deployment and are included in the repository root:
+The following screenshots document the completed deployment and are stored in the repository's `screenshots/` directory:
 
 ### Jenkins pipeline
 
@@ -159,11 +185,11 @@ docker compose -f jenkins/docker-compose.yml up -d
 docker logs -f devops-jenkins
 ```
 
-For a real Jenkins agent, install Docker CLI/daemon access, AWS CLI, Terraform, Python, curl, and Trivy. The Docker socket is powerful; use a dedicated agent and restrict job permissions. Install these plugins: Pipeline, Git, GitHub Integration, Credentials Binding, and AWS Credentials. No paid plugins are required.
+The provided Jenkins image installs Docker CLI, AWS CLI, Terraform, Python, and Trivy. Docker Compose and the Docker daemon run on the host, with the Docker socket mounted into the Jenkins container. If you use a separate Jenkins agent, install the pipeline tools on that agent and provide controlled Docker access. The Docker socket grants substantial host control; use a dedicated server and restrict Jenkins job permissions. Install these plugins: Pipeline, Git, GitHub Integration, Credentials Binding, and AWS Credentials. No paid plugins are required.
 
 Create a Pipeline job connected to this GitHub repository and point it at `Jenkinsfile`. Add a GitHub webhook to `https://JENKINS_HOST/github-webhook/` (or use SCM polling). Configure a Jenkins credential with ID `aws-deploy`, type “AWS Credentials”, scoped to the deployment folder/job. The IAM user or role should be restricted to this repository's ECR actions, ECS service/task-definition actions, ALB/VPC/IAM actions needed by Terraform, CloudWatch log/alarms, and `sts:GetCallerIdentity`; prefer short-lived role credentials in production. Do not echo credentials in shell steps.
 
-The pipeline runs checkout, syntax/Terraform validation, tests, Docker build, Trivy scan, ECR push, Terraform deploy, and an ALB `/health` verification. It uses the Git commit SHA as an immutable image tag, waits for ECS stabilization through Terraform, and skips AWS stages for pull requests (`changeRequest()`). Do not run `terraform destroy` from this pipeline.
+The pipeline runs checkout, syntax/Terraform validation, tests, Docker build, Trivy scan, ECR push, Terraform deploy, and repeated ALB `/health` checks. It uses the Git commit SHA as an immutable image tag and skips AWS stages for pull requests (`changeRequest()`). The health check retries while the service starts; the ECS Terraform resource itself does not wait for steady state. Do not run `terraform destroy` from this pipeline.
 
 ## Running the project on a live server
 
@@ -171,7 +197,7 @@ An interviewer can run the complete solution from a Linux server such as an Ubun
 
 ### Server requirements
 
-Use a server with at least 2 vCPUs, 4 GB RAM, 30 GB disk space, a public DNS name or public IP, and Docker with the Compose plugin. Configure the firewall/security group as follows:
+Use a server with at least 2 vCPUs, 4 GB RAM, 30 GB disk space, a public DNS name or public IP, and outbound internet access. The bootstrap script installs Docker with Compose and the other host tools on Ubuntu or Debian. Configure the firewall/security group as follows:
 
 - TCP 22: administrator's IP only
 - TCP 8080: administrator's IP only during Jenkins setup
@@ -183,19 +209,19 @@ The Jenkins webhook endpoint must be reachable from GitHub. For a short-lived de
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y git docker.io docker-compose-plugin awscli
-sudo systemctl enable --now docker
+sudo apt-get install -y git
 
 git clone https://github.com/Patrickmbaza/Interview-project.git
 cd Interview-project
 
 chmod +x scripts/bootstrap.sh scripts/destroy.sh
-aws configure
 
 ./scripts/bootstrap.sh \
   --region us-east-1 \
   --state-bucket YOUR-GLOBALLY-UNIQUE-TERRAFORM-BUCKET
 ```
+
+Provide AWS credentials to the server before running bootstrap. On EC2, attach an IAM instance profile with permission to create the Terraform state bucket and lock table; this avoids keeping long-lived access keys on the host. Bootstrap installs AWS CLI if needed and then verifies the AWS identity. If using access keys instead, configure AWS CLI securely before running the script and never commit the credentials.
 
 The bootstrap script builds and starts the custom Jenkins image. Retrieve the initial administrator password with:
 
@@ -318,22 +344,14 @@ Example deployed response:
 
 ## Cleanup
 
-After confirming the environment is no longer needed, review the plan and run:
-
-```bash
-terraform -chdir=terraform destroy -var-file=dev.tfvars
-```
-
-This removes the application infrastructure but ECR is configured with `force_delete = false`; delete retained images/repository intentionally if required. Also remove the remote state bucket/table only when no state is using them.
-
-For a guarded cleanup, use the destroy script:
+After confirming the environment is no longer needed, use the guarded destroy script. It deletes ECR images before Terraform removes the repository, which is necessary because ECR is configured with immutable tags and `force_delete = false`:
 
 ```bash
 chmod +x scripts/destroy.sh
 ./scripts/destroy.sh --var-file dev.tfvars
 ```
 
-The script deletes ECR images before destroying the Terraform-managed application resources, which allows the immutable ECR repository to be removed. It preserves the Terraform state bucket, lock table, and Jenkins data by default. To stop Jenkins, add `--stop-jenkins`. To remove Jenkins data as well, use `--remove-jenkins-data`. Delete the Terraform backend only when the project is permanently finished:
+The script preserves the Terraform state bucket, lock table, and Jenkins data by default. To stop Jenkins, add `--stop-jenkins`. To remove Jenkins data as well, use `--remove-jenkins-data`. Delete the Terraform backend only when the project is permanently finished:
 
 ```bash
 ./scripts/destroy.sh \
