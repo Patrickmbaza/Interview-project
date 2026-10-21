@@ -91,7 +91,7 @@ For local work: Python 3.12+, Docker, curl, Terraform 1.6+, AWS CLI, and Trivy. 
 
 ## Bootstrap
 
-The one-time setup can be prepared with `scripts/bootstrap.sh`. It validates the local tools and AWS identity, creates a versioned and encrypted Terraform state bucket, creates the DynamoDB lock table, writes the ignored local `terraform/backend.tf`, and starts the Jenkins controller with Docker Compose.
+The one-time setup can be prepared with `scripts/bootstrap.sh`. On Ubuntu or Debian, it installs missing host prerequisites (Docker Engine and Compose, Terraform, AWS CLI v2, Python 3, and curl), verifies AWS identity, creates a versioned and encrypted Terraform state bucket, creates the DynamoDB lock table, writes the ignored local `terraform/backend.tf`, and starts Jenkins with Docker Compose. The script asks for confirmation before creating the AWS backend. It requires root or `sudo` for package installation. Trivy is installed inside the Jenkins image by `jenkins/Dockerfile`, so it does not need a separate host installation.
 
 Run it from the repository root:
 
@@ -102,7 +102,7 @@ chmod +x scripts/bootstrap.sh
   --state-bucket YOUR-GLOBALLY-UNIQUE-TERRAFORM-BUCKET
 ```
 
-The script asks for confirmation before creating AWS state resources. Use `--skip-backend` when the backend already exists, or `--skip-jenkins` when Jenkins is managed elsewhere. It never stores AWS, GitHub, or Jenkins secrets in the repository and does not destroy resources.
+Use `--skip-backend` when the backend already exists, `--skip-jenkins` when Jenkins is managed elsewhere, or `--skip-tool-install` if you have already installed the host prerequisites. Automatic host installation supports Ubuntu and Debian; on other distributions, install Docker with Compose, Terraform, AWS CLI v2, Python 3, and curl before running the script. It never stores AWS, GitHub, or Jenkins secrets in the repository and does not destroy resources.
 
 After bootstrap, configure the Jenkins `aws-deploy` credential, create the Pipeline job, and add the GitHub webhook. The application pipeline then handles validation, testing, image scanning, ECR publishing, Terraform deployment, and health verification.
 

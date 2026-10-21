@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Bootstrap one-time infrastructure and local Jenkins prerequisites.
+# Bootstrap host prerequisites, Terraform backend, and local Jenkins.
 # This script does not deploy the application, destroy resources, or store secrets.
 
 usage() {
@@ -15,6 +15,7 @@ Options:
   --lock-table NAME        DynamoDB lock table (default: devops-microservice-locks)
   --skip-backend           Do not create/configure the Terraform state backend
   --skip-jenkins           Do not start Jenkins with Docker Compose
+  --skip-tool-install       Only check host tools; do not install missing packages
   --yes                    Skip the confirmation prompt for AWS backend creation
   -h, --help               Show this help
 
@@ -29,6 +30,7 @@ STATE_BUCKET=""
 LOCK_TABLE="devops-microservice-locks"
 SKIP_BACKEND=false
 SKIP_JENKINS=false
+SKIP_TOOL_INSTALL=false
 ASSUME_YES=false
 
 while [[ $# -gt 0 ]]; do
@@ -51,6 +53,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --skip-jenkins)
             SKIP_JENKINS=true
+            shift
+            ;;
+        --skip-tool-install)
+            SKIP_TOOL_INSTALL=true
             shift
             ;;
         --yes)
@@ -81,12 +87,104 @@ need_command() {
     }
 }
 
-echo "Checking local prerequisites..."
+install_host_tools() {
+    if [[ "$SKIP_TOOL_INSTALL" == true ]]; then
+        return
+    fi
+
+    if command -v docker >/dev/null 2>&1 && \
+       docker compose version >/dev/null 2>&1 && \
+       command -v terraform >/dev/null 2>&1 && \
+       command -v aws >/dev/null 2>&1 && \
+       command -v python3 >/dev/null 2>&1 && \
+       command -v curl >/dev/null 2>&1; then
+        echo "All required host tools are already installed."
+        return
+    fi
+
+    if [[ ! -f /etc/os-release ]]; then
+        echo "Cannot identify Linux distribution. Install Docker Compose, Terraform, AWS CLI v2, Python 3, and curl manually." >&2
+        exit 1
+    fi
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    if [[ "${ID:-}" != "ubuntu" && "${ID:-}" != "debian" ]]; then
+        echo "Automatic installation supports Ubuntu and Debian only (detected: ${ID:-unknown}). Install Docker Compose, Terraform, AWS CLI v2, Python 3, and curl manually." >&2
+        exit 1
+    fi
+
+    local apt_cmd=(apt-get)
+    if [[ "$(id -u)" -ne 0 ]]; then
+        command -v sudo >/dev/null 2>&1 || {
+            echo "Run as root or install sudo to install host tools." >&2
+            exit 1
+        }
+        apt_cmd=(sudo apt-get)
+    fi
+
+    echo "Installing host prerequisites on ${PRETTY_NAME:-$ID}..."
+    "${apt_cmd[@]}" update
+    "${apt_cmd[@]}" install -y ca-certificates curl gnupg python3 python3-venv unzip
+
+    if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
+        "${apt_cmd[@]}" install -y docker.io docker-compose-v2
+        if command -v systemctl >/dev/null 2>&1; then
+            if [[ "$(id -u)" -eq 0 ]]; then
+                systemctl enable --now docker
+            else
+                sudo systemctl enable --now docker
+            fi
+        fi
+    fi
+
+    if ! command -v terraform >/dev/null 2>&1; then
+        local keyring=/usr/share/keyrings/hashicorp-archive-keyring.gpg
+        local source_list=/etc/apt/sources.list.d/hashicorp.list
+        if [[ "$(id -u)" -eq 0 ]]; then
+            curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o "$keyring"
+            printf 'deb [signed-by=%s] https://apt.releases.hashicorp.com %s main\n' "$keyring" "$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")" > "$source_list"
+        else
+            curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee "$keyring" >/dev/null
+            printf 'deb [signed-by=%s] https://apt.releases.hashicorp.com %s main\n' "$keyring" "$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")" | sudo tee "$source_list" >/dev/null
+        fi
+        "${apt_cmd[@]}" update
+        "${apt_cmd[@]}" install -y terraform
+    fi
+
+    if ! command -v aws >/dev/null 2>&1; then
+        local install_dir
+        if [[ "$(id -u)" -eq 0 ]]; then
+            install_dir=/usr/local
+        else
+            install_dir=/usr/local
+        fi
+        local aws_zip
+        aws_zip="$(mktemp /tmp/awscliv2.XXXXXX.zip)"
+        curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o "$aws_zip"
+        local aws_extract
+        aws_extract="$(mktemp -d /tmp/awscliv2.XXXXXX)"
+        unzip -q "$aws_zip" -d "$aws_extract"
+        if [[ "$(id -u)" -eq 0 ]]; then
+            "$aws_extract/aws/install" --install-dir "$install_dir/aws-cli" --bin-dir /usr/local/bin
+        else
+            sudo "$aws_extract/aws/install" --install-dir "$install_dir/aws-cli" --bin-dir /usr/local/bin
+        fi
+        rm -rf "$aws_zip" "$aws_extract"
+    fi
+}
+
+install_host_tools
+
+echo "Checking host prerequisites..."
 need_command aws
 need_command terraform
 need_command docker
 need_command curl
 need_command python3
+docker compose version >/dev/null 2>&1 || {
+    echo "Docker Compose plugin is unavailable. Install the Docker Compose plugin and rerun." >&2
+    exit 1
+}
 
 if [[ "$SKIP_BACKEND" == false && -z "$STATE_BUCKET" ]]; then
     echo "--state-bucket is required unless --skip-backend is used." >&2
@@ -165,7 +263,14 @@ if [[ "$SKIP_JENKINS" == false ]]; then
     }
 
     echo "Starting Jenkins..."
-    docker compose -f "$JENKINS_COMPOSE" up -d --build
+    if [[ -S /var/run/docker.sock ]]; then
+        export DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
+    fi
+    if docker info >/dev/null 2>&1; then
+        docker compose -f "$JENKINS_COMPOSE" up -d --build
+    else
+        sudo docker compose -f "$JENKINS_COMPOSE" up -d --build
+    fi
     echo "Jenkins container started. The initial setup password can be retrieved with:"
     echo "  docker exec devops-jenkins cat /var/jenkins_home/secrets/initialAdminPassword"
 fi
