@@ -127,7 +127,8 @@ Run it from the repository root:
 chmod +x scripts/bootstrap.sh
 ./scripts/bootstrap.sh \
   --region us-east-1 \
-  --state-bucket YOUR-GLOBALLY-UNIQUE-TERRAFORM-BUCKET
+  --state-bucket domalak-state-bucket \
+  --lock-table domalak-lock-table
 ```
 
 Use `--skip-backend` when you do not want the script to create/configure backend resources, `--skip-jenkins` when Jenkins is managed elsewhere, or `--skip-tool-install` if you have already installed the host prerequisites. **Bootstrap does not run `terraform init`, validate, plan, or deploy the application.** With the backend enabled, it writes the local backend configuration; initialize it explicitly from the repository root when you need Terraform on the host:
@@ -226,10 +227,11 @@ chmod +x scripts/bootstrap.sh scripts/destroy.sh
 
 ./scripts/bootstrap.sh \
   --region us-east-1 \
-  --state-bucket YOUR-GLOBALLY-UNIQUE-TERRAFORM-BUCKET
+  --state-bucket domalak-state-bucket \
+  --lock-table domalak-lock-table
 ```
 
-Provide AWS credentials to the server before running bootstrap. On EC2, attach an IAM instance profile with permission to create the Terraform state bucket and lock table; this avoids keeping long-lived access keys on the host. Bootstrap installs AWS CLI if needed and then verifies the AWS identity. If using access keys instead, configure AWS CLI securely before running the script and never commit the credentials.
+The command uses this project's existing Terraform backend bucket and lock table; use the exact names configured for your environment. Bootstrap configures these backend resources and writes the ignored `terraform/backend.tf`, but does not run `terraform init`. For Jenkins-driven deployment, no host-side init is needed: the pipeline initializes Terraform during its AWS Push stage. Run `terraform -chdir=terraform init -input=false` only if you will run Terraform commands directly on the host. Provide AWS credentials to the server before running bootstrap. On EC2, attach an IAM instance profile with permission to access/configure the existing backend (and create the bucket/table if they do not exist); this avoids keeping long-lived access keys on the host. Bootstrap installs AWS CLI if needed and then verifies the AWS identity. If using access keys instead, configure AWS CLI securely before running the script and never commit the credentials.
 
 The bootstrap script builds and starts the custom Jenkins image. Retrieve the initial administrator password with:
 

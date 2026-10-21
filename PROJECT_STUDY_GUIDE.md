@@ -228,7 +228,13 @@ docker compose down
 ### Live environment
 
 1. Clone the repository to an Ubuntu or Debian server and provide AWS credentials (prefer an instance profile on EC2).
-2. Run `scripts/bootstrap.sh` with a globally unique state-bucket name. This installs/checks host tools, configures the remote state backend, and starts Jenkins; it does not run `terraform init` or deploy the application. If you intend to use Terraform commands on the EC2 host, run `terraform -chdir=terraform init -input=false` after bootstrap. The Jenkins pipeline initializes Terraform itself during its AWS Push stage.
+2. Run bootstrap with this project's existing backend resource names:
+
+   ```bash
+   ./scripts/bootstrap.sh --region us-east-1 --state-bucket domalak-state-bucket --lock-table domalak-lock-table
+   ```
+
+   Replace these names only if your environment uses a different backend. Bootstrap installs/checks host tools, configures the backend, and starts Jenkins; it does not run `terraform init` or deploy the application. For Jenkins-driven deployment, no host-side initialization is needed because the pipeline initializes Terraform during its AWS Push stage. If you intend to run Terraform commands directly on the EC2 host, run `terraform -chdir=terraform init -input=false` after bootstrap.
 3. Finish Jenkins' browser setup and install the listed plugins.
 4. Create a Pipeline job from SCM using this repository, `main`, and `Jenkinsfile`.
 5. Add the `aws-deploy` Jenkins credential and GitHub push webhook.
