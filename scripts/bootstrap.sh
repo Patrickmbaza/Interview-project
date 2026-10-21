@@ -263,13 +263,16 @@ if [[ "$SKIP_JENKINS" == false ]]; then
     }
 
     echo "Starting Jenkins..."
+    DOCKER_GID=999
     if [[ -S /var/run/docker.sock ]]; then
-        export DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
+        DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
     fi
+    export DOCKER_GID
     if docker info >/dev/null 2>&1; then
-        docker compose -f "$JENKINS_COMPOSE" up -d --build
+        docker compose -f "$JENKINS_COMPOSE" up -d --build --force-recreate
     else
-        sudo docker compose -f "$JENKINS_COMPOSE" up -d --build
+        sudo env DOCKER_GID="$DOCKER_GID" \
+            docker compose -f "$JENKINS_COMPOSE" up -d --build --force-recreate
     fi
     echo "Jenkins container started. The initial setup password can be retrieved with:"
     echo "  docker exec devops-jenkins cat /var/jenkins_home/secrets/initialAdminPassword"

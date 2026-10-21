@@ -1,5 +1,7 @@
 # DevOps Microservice: Jenkins + AWS ECS Fargate
 
+For a deeper explanation of the design, pipeline, Terraform modules, operations, and interview talking points, see the [Project Study Guide](PROJECT_STUDY_GUIDE.md).
+
 This repository demonstrates a complete delivery path for a small FastAPI microservice:
 
 1. Code is stored in GitHub.
